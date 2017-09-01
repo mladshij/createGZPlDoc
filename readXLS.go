@@ -3,6 +3,8 @@
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -34,8 +36,9 @@ var mapRowDescInSheet rowDesc
 
 func main() {
 	var (
-		excelInFileName  string
+		//excelInFileName  string
 		excelOutFileName string
+		inputDir         string = "./In/"
 	)
 
 	mapRoomToUniqIq = make(roomUniqId)
@@ -44,10 +47,13 @@ func main() {
 
 	initRoomToIdzkuFromFile("Rooms.xlsx", mapRoomToUniqIq)
 	initIDZhkuToElsFromFile("Accounts.xlsx ", mapUniqIdToAccount)
+	inputList, _ := initInputFileList(inputDir)
 
-	excelInFileName = "301.xls"
+	//excelInFileName = "301.xls"
 	excelOutFileName = "PDTemplate.xlsx"
-	processPlatDocFile(excelInFileName, excelOutFileName, mapRoomToUniqIq, mapUniqIdToAccount)
+	for _, fileName := range inputList {
+		processPlatDocFile(inputDir+fileName, excelOutFileName, mapRoomToUniqIq, mapUniqIdToAccount)
+	}
 }
 
 func toUTF(inputString string) string {
@@ -69,9 +75,13 @@ func processPlatDocFile(excelPD string, excelTemplate string, mapIDs roomUniqId,
 		valStr string
 		room   roomID
 		//oiVolume     float64
-		oiPrice      float64
-		oiTotalValue float64
+		oiPrice                                                         float64
+		oiTotalValue                                                    float64
+		xlFileOutList                                                   *xlsx.File
+		xlSheetOutListRooms, xlSheetOutListServices, xlSheetOutListPeni *xlsx.Sheet
 	)
+
+	fmt.Printf("Processing file %s\n", excelPD)
 
 	xlBookPD, err := xls.Open(excelPD, "win1251")
 	if err != nil {
@@ -80,17 +90,44 @@ func processPlatDocFile(excelPD string, excelTemplate string, mapIDs roomUniqId,
 	}
 	fmt.Println("Input file has been opened successfully")
 
-	xlFileOutList := xlsx.NewFile()
-	/*	if err != nil {
-		fmt.Println("error NewFile (output file)")
-		return false
-	}*/
+	// проверяем есть ли уже файл с результатами, если его нет, то создаём его пустым
+	if !FileExists(excelTemplate) {
+		fmt.Println("Creating empty output file")
+		xlFileOutList = xlsx.NewFile()
 
-	/*	xlFile2OutList, err := excelize.OpenFile(excelTemplate)
+		xlSheetOutListRooms, err = xlFileOutList.AddSheet(sheetTitleRooms)
 		if err != nil {
-			fmt.Println("error OpenFile (output file)")
+			fmt.Println("error AddSheet 1 (output file)")
 			return false
-		}*/
+		}
+		fmt.Printf("Sheet %s has been added\n", sheetTitleRooms)
+
+		xlSheetOutListServices, err = xlFileOutList.AddSheet(sheetTitleServices)
+		if err != nil {
+			fmt.Println("error AddSheet 2 (output file)")
+			return false
+		}
+		fmt.Printf("Sheet %s has been added\n", sheetTitleServices)
+
+		xlSheetOutListPeni, err = xlFileOutList.AddSheet(sheetTitlePeni)
+		if err != nil {
+			fmt.Println("error AddSheet 3 (output file)")
+			fmt.Println(err)
+			return false
+		}
+		fmt.Printf("Sheet %s has been added\n", sheetTitlePeni)
+
+		xlFileOutList.Save(excelTemplate)
+		fmt.Println("Output file has been created")
+	}
+
+	// теперь файл можно открывать обычным путём (он уже есть)
+	xlFileOutList, err = xlsx.OpenFile(excelTemplate)
+
+	if err != nil {
+		fmt.Printf("Error on opening file %s\n", err.Error)
+		return false
+	}
 
 	fmt.Println("Output file has been opened successfully")
 
@@ -100,38 +137,14 @@ func processPlatDocFile(excelPD string, excelTemplate string, mapIDs roomUniqId,
 		return false
 	}
 
-	xlSheetOutListRooms := xlFileOutList.Sheet[sheetTitleRooms]
-	xlSheetOutListServices := xlFileOutList.Sheet[sheetTitleServices]
-	xlSheetOutListPeni := xlFileOutList.Sheet[sheetTitlePeni]
+	xlSheetOutListRooms = xlFileOutList.Sheet[sheetTitleRooms]
+	xlSheetOutListServices = xlFileOutList.Sheet[sheetTitleServices]
+	xlSheetOutListPeni = xlFileOutList.Sheet[sheetTitlePeni]
 
-	if xlSheetOutListRooms == nil {
-		xlSheetOutListRooms, err = xlFileOutList.AddSheet(sheetTitleRooms)
-		if err != nil {
-			fmt.Println("error AddSheet 1 (output file)")
-			return false
-		}
+	if xlSheetOutListRooms == nil || xlSheetOutListServices == nil || xlSheetOutListPeni == nil {
+		fmt.Println("Invalid structure!")
+		return false
 	}
-	if xlSheetOutListServices == nil {
-		xlSheetOutListServices, err = xlFileOutList.AddSheet(sheetTitleServices)
-		if err != nil {
-			fmt.Println("error AddSheet 2 (output file)")
-			return false
-		}
-	}
-	if xlSheetOutListPeni == nil {
-		xlSheetOutListPeni, err = xlFileOutList.AddSheet(sheetTitlePeni)
-		if err != nil {
-			fmt.Println("error AddSheet 3 (output file)")
-			fmt.Println(err)
-			return false
-		}
-	}
-
-	/*	xlSheetOutListRooms := xlFileOutList.Sheets[0]
-		if strings.Compare("Разделы 1-2", xlSheetOutListRooms.Name) != 0 {
-			fmt.Println("error: out file, invalid sheet 1")
-			return false
-		}*/
 
 	InitRowListInDocument(xlSheetPD, mapRowDescInSheet)
 
@@ -516,8 +529,14 @@ func processPlatDocFile(excelPD string, excelTemplate string, mapIDs roomUniqId,
 	// в т. ч. за ком. усл.: потребление при содержании общего имущества
 	xlServicesRow.AddCell().SetValue("")
 
+	// сообщение о готовности
+	fmt.Printf("Room %d: processed\n", room.Number)
+
 	// всё готово
-	xlFileOutList.Save("./res.xlsx")
+	errSave := xlFileOutList.Save(excelTemplate)
+	if err != nil {
+		fmt.Printf("Error %s\n", errSave.Error())
+	}
 
 	//xlFile2OutList.SetCellStr(sheetTitleRooms, "A4", id)
 
@@ -698,14 +717,19 @@ func (mapList rowDesc) FindRowIndex(rowTitle string) int {
 
 func ConvServiceNameToGisZhkh(serviceName string) (resName string, individual bool, additional bool, err bool) {
 	var (
-		origServiceName = []string{"охрана", "холодное водоснабжение (248-246)", "водоотведение",
+		origServiceName = []string{"охрана", "домофон", "видеодомофон",
+			"холодное водоснабжение", "горячее водоснабжение", "водоотведение", "электроэнергия",
 			"электроэнергия на содерж. ОИ", "горячая вода на содерж.  ОИ", "холодная вода на содерж. ОИ"}
-		gisServiceName = []string{"Оплата охранных услуг", "Холодное водоснабжение", "Водоотведение",
+		gisServiceName = []string{"Оплата охранных услуг", "Запирающее устройство (ЗУ)", "Видеонаблюдение",
+			"Холодное водоснабжение", "Горячее водоснабжение", "Водоотведение", "Электроснабжение",
 			"Электрическая энергия", "Горячая вода", "Холодная вода"}
 		isIndividual = []bool{true, true, true,
+			true, true, true, true,
 			false, false, false}
-		isAdditional = []bool{true, false, false,
+		isAdditional = []bool{true, true, true,
+			false, false, false, false,
 			false, false, false}
+		serviceSimpleName string
 	)
 
 	resName = ""
@@ -713,8 +737,16 @@ func ConvServiceNameToGisZhkh(serviceName string) (resName string, individual bo
 	additional = false
 	err = true
 
+	pos := strings.Index(serviceName, " (")
+	if pos > 1 {
+
+		serviceSimpleName = serviceName[0:pos]
+	} else {
+		serviceSimpleName = serviceName
+	}
+
 	for p, v := range origServiceName {
-		if v == serviceName {
+		if v == serviceSimpleName {
 			resName = gisServiceName[p]
 			individual = isIndividual[p]
 			additional = isAdditional[p]
@@ -723,4 +755,35 @@ func ConvServiceNameToGisZhkh(serviceName string) (resName string, individual bo
 		}
 	}
 	return
+}
+
+func initInputFileList(inputDir string) (fileList map[int]string, err bool) {
+
+	count := 0
+	fileList = make(map[int]string, 100)
+	err = false
+
+	// читаем список файлов из входного каталога
+	dirEntries, _ := ioutil.ReadDir(inputDir)
+	for _, val := range dirEntries {
+		if val.IsDir() {
+			continue
+		}
+		if strings.Compare(filepath.Ext(val.Name()), ".xls") != 0 {
+			continue
+		}
+		fileList[count] = val.Name()
+		count++
+	}
+	fmt.Printf("Finding %d input files\n", len(fileList))
+	return
+}
+
+func FileExists(fileName string) bool {
+	if _, err := os.Stat(fileName); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
 }
